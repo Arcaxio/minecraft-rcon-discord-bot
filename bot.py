@@ -2,9 +2,11 @@ import discord
 from discord.ext import commands
 from mcrcon import MCRcon
 import os # Used for securely loading credentials
+from dotenv import load_dotenv
 
 # --- Configuration ---
 # It's best practice to load these from environment variables or a config file
+load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 RCON_HOST = os.getenv("RCON_IP")  # Your VPS IP address
 RCON_PORT = 25576           # Your RCON port from server.properties
