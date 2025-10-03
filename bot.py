@@ -3,6 +3,7 @@ from discord.ext import commands
 from mcrcon import MCRcon
 import os # Used for securely loading credentials
 from dotenv import load_dotenv
+import json
 
 # --- Configuration ---
 # It's best practice to load these from environment variables or a config file
