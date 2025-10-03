@@ -72,14 +72,15 @@ async def on_message(message):
 
         # Build the table string
         # We calculate padding to make it look neat
-        header = f"{'Song Name':<30} | {'Amount':<10} | {'User':<20}\n"
-        separator = f"{'-'*30}-+-{'-'*10}-+-{'-'*20}\n"
+        header = f"{'Song Name':<30} | {'Target':<15} | {'Amount':<10} | {'User':<20}\n"
+        separator = f"{'-'*30}-+-{'-'*15}-+-{'-'*10}-+-{'-'*20}\n"
         table = header + separator
 
         for bounty in bounties:
             # Truncate long song names to prevent breaking the format
             song_name = (bounty['song_name'][:27] + '...') if len(bounty['song_name']) > 30 else bounty['song_name']
-            table += f"{song_name:<30} | {bounty['amount']:<10} | {bounty['user']:<20}\n"
+            target = (bounty['target'][:12] + '...') if len(bounty['target']) > 15 else bounty['target']
+            table += f"{song_name:<30} | {target:<15} | {bounty['amount']:<10} | {bounty['user']:<20}\n"
 
         await message.channel.send(f"**Current Bounties:**\n```\n{table}```")
 
@@ -89,23 +90,28 @@ async def on_message(message):
             # Extract parameters from the command string
             params_str = content[len("bounty>register "):].strip()
             
-            # The last word is assumed to be the amount, everything before it is the song name
-            parts = params_str.rsplit(' ', 1)
+            # The last two words are amount and target, everything before is the song name
+            parts = params_str.rsplit(' ', 2)
             
-            if len(parts) < 2:
-                await message.channel.send("❌ **Invalid Format.** Please include both a song name and an amount.")
+            if len(parts) < 3:
+                await message.channel.send("❌ **Invalid Format.** Please include a song name, target, and amount.")
                 return
 
             song_name = parts[0].strip()
-            amount = parts[1].strip()
+            target = parts[1].strip()
+            amount = parts[2].strip()
 
             if not song_name:
                 await message.channel.send("❌ **Error:** Song name cannot be empty.")
                 return
-            
+            if not target:
+                await message.channel.send("❌ **Error:** Target cannot be empty.")
+                return
+
             # Add the new bounty to our list
             bounties.append({
                 "song_name": song_name,
+                "target": target,
                 "amount": amount,
                 "user": message.author.name
             })
@@ -114,8 +120,25 @@ async def on_message(message):
 
         except Exception as e:
             print(f"Error during bounty registration: {e}")
-            await message.channel.send("❌ **Invalid Format.** Use: `bounty>register [Song Name] [Amount]`")
+            await message.channel.send("❌ **Invalid Format.** Use: `bounty>register [Song Name] [Target] [Amount]`")
+
+    # --- Bounty Help Command ---
+    elif content.lower() == "bounty>help":
+        help_message = (
+            "**Bounty Bot Commands:**\n"
+            "```\n"
+            "aqil>bounty\n"
+            "   - Lists all active bounties.\n\n"
+            "bounty>register [Song Name] [Target] [Amount]\n"
+            "   - Registers a new bounty.\n"
+            "   - Example: bounty>register \"A Cruel Angel's Thesis\" FC 100k\n\n"
+            "bounty>help\n"
+            "   - Shows this help message.\n"
+            "```"
+        )
+        await message.channel.send(help_message)
 
 
 # --- Run the Bot ---
 bot.run(DISCORD_TOKEN)
+
