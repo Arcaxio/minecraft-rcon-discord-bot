@@ -12,6 +12,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 RCON_HOST = os.getenv("RCON_IP")  # Your VPS IP address
 RCON_PORT = 25576           # Your RCON port from server.properties
 RCON_PASS = os.getenv("RCON_PASSWORD")
+BOUNTY_FILE = "bounties.json"
 
 # A list of allowed commands to prevent abuse
 ALLOWED_COMMANDS = ["whitelist"]
