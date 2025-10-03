@@ -20,6 +20,33 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# --- Data Persistence Functions ---
+def load_bounties():
+    """Loads bounty data from the JSON file."""
+    try:
+        with open(BOUNTY_FILE, 'r') as f:
+            # Check if file is empty to avoid errors
+            content = f.read()
+            if not content:
+                return []
+            return json.loads(content)
+    except FileNotFoundError:
+        # If the file doesn't exist, return an empty list
+        return []
+    except json.JSONDecodeError:
+        # If the file is corrupted or not valid JSON, return empty
+        print("Warning: Could not decode bounties.json. Starting with empty bounties.")
+        return []
+
+def save_bounties(data):
+    """Saves the bounty data to the JSON file."""
+    with open(BOUNTY_FILE, 'w') as f:
+        json.dump(data, f, indent=4)
+
+# --- Bounty Data Storage ---
+# Load bounties from the file when the bot starts
+bounties = load_bounties()
+
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
@@ -43,17 +70,15 @@ async def server(ctx, *, command: str):
     except Exception as e:
         await ctx.send(f"❌ **Error:** Could not connect to the server or send command. Details: {e}")
 
-# --- Bounty Data Storage ---
-# This list will store bounty objects in memory.
-# Note: This data will reset if the bot restarts. For persistence, a database would be needed.
-bounties = []
-
 # --- Custom Command Handling via on_message ---
 @bot.event
 async def on_message(message):
     """
     Handles messages to check for custom commands that don't use the bot's prefix.
     """
+    # This is now a global variable, so we need to declare our intent to modify it
+    global bounties
+
     # Ignore messages sent by the bot itself to prevent loops
     if message.author == bot.user:
         return
@@ -115,6 +140,8 @@ async def on_message(message):
                 "amount": amount,
                 "user": message.author.name
             })
+            # Save the updated list to the JSON file
+            save_bounties(bounties)
             
             await message.channel.send(f"✅ **Bounty registered for '{song_name}'!**")
 
