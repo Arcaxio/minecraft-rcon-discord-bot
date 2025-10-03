@@ -1,25 +1,19 @@
 import discord
 from discord.ext import commands
-from mcrcon import MCRcon
 import os # Used for securely loading credentials
 from dotenv import load_dotenv
-import json
+import json # Import the json library
 
 # --- Configuration ---
 # It's best practice to load these from environment variables or a config file
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-RCON_HOST = os.getenv("RCON_IP")  # Your VPS IP address
-RCON_PORT = 25576           # Your RCON port from server.properties
-RCON_PASS = os.getenv("RCON_PASSWORD")
-BOUNTY_FILE = "bounties.json"
-
-# A list of allowed commands to prevent abuse
-ALLOWED_COMMANDS = ["whitelist"]
+BOUNTY_FILE = "bounties.json" # The file to store bounty data
 
 # --- Bot Setup ---
 intents = discord.Intents.default()
 intents.message_content = True
+# We still need a prefix, but since we handle commands manually, it won't be used.
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # --- Data Persistence Functions ---
@@ -53,25 +47,6 @@ bounties = load_bounties()
 async def on_ready():
     print(f'Logged in as {bot.user}')
 
-@bot.command()
-async def server(ctx, *, command: str):
-    """Sends a command to the Minecraft server."""
-    
-    command_parts = command.split()
-    if not command_parts or command_parts[0].lower() not in ALLOWED_COMMANDS:
-        await ctx.send("❌ **Error:** That command is not allowed.")
-        return
-
-    try:
-        with MCRcon(RCON_HOST, RCON_PASS, port=RCON_PORT) as mcr:
-            response = mcr.command(command)
-            if response:
-                await ctx.send(f"✅ **Server Response:**\n```\n{response}\n```")
-            else:
-                await ctx.send("✅ **Command sent successfully** (no response from server).")
-    except Exception as e:
-        await ctx.send(f"❌ **Error:** Could not connect to the server or send command. Details: {e}")
-
 # --- Custom Command Handling via on_message ---
 @bot.event
 async def on_message(message):
@@ -84,9 +59,6 @@ async def on_message(message):
     # Ignore messages sent by the bot itself to prevent loops
     if message.author == bot.user:
         return
-
-    # Allows the bot to still process commands with the "!" prefix (like !server)
-    await bot.process_commands(message)
 
     # Standardize message content for easier checking
     content = message.content.strip()
@@ -151,6 +123,36 @@ async def on_message(message):
             print(f"Error during bounty registration: {e}")
             await message.channel.send("❌ **Invalid Format.** Use: `bounty>register [Song Name] [Target] [Amount]`")
 
+    # --- Delete Bounty Command ---
+    elif content.lower().startswith("bounty>delete "):
+        song_query = content[len("bounty>delete "):].strip().lower()
+        if not song_query:
+            await message.channel.send("❌ **Invalid Format.** Please provide a song name to delete.")
+            return
+
+        # Find all bounties matching the query (case-insensitive)
+        user_matches = [
+            b for b in bounties 
+            if song_query in b['song_name'].lower() and b['user'] == message.author.name
+        ]
+
+        if not user_matches:
+            await message.channel.send("❌ **Error:** No bounty found matching that name under your user.")
+            return
+        
+        if len(user_matches) > 1:
+            response = "Found multiple bounties matching your query. Please be more specific.\nHere are the matches:\n"
+            for match in user_matches:
+                response += f"- {match['song_name']}\n"
+            await message.channel.send(response)
+            return
+
+        # If exactly one match is found
+        bounty_to_delete = user_matches[0]
+        bounties.remove(bounty_to_delete)
+        save_bounties(bounties)
+        await message.channel.send(f"✅ **Successfully deleted bounty:** '{bounty_to_delete['song_name']}'")
+
     # --- Bounty Help Command ---
     elif content.lower() == "bounty>help":
         help_message = (
@@ -161,6 +163,8 @@ async def on_message(message):
             "bounty>register [Song Name] [Target] [Amount]\n"
             "   - Registers a new bounty.\n"
             "   - Example: bounty>register \"A Cruel Angel's Thesis\" FC 100k\n\n"
+            "bounty>delete [Song Name]\n"
+            "   - Deletes a bounty you created. Partial names work.\n\n"
             "bounty>help\n"
             "   - Shows this help message.\n"
             "```"
@@ -170,4 +174,3 @@ async def on_message(message):
 
 # --- Run the Bot ---
 bot.run(DISCORD_TOKEN)
-
