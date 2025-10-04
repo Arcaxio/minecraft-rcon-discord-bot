@@ -3,6 +3,7 @@ from discord.ext import commands
 import os # Used for securely loading credentials
 from dotenv import load_dotenv
 import json # Import the json library
+from decimal import Decimal, InvalidOperation # For precise decimal validation
 
 # --- Configuration ---
 # It's best practice to load these from environment variables or a config file
@@ -39,6 +40,51 @@ def save_bounties(data):
     with open(BOUNTY_FILE, 'w') as f:
         json.dump(data, f, indent=4)
 
+# --- Validation Functions ---
+def validate_difficulty(difficulty_str):
+    """Validates and standardizes the difficulty input."""
+    valid_difficulties = {
+        "easy": "Easy",
+        "basic": "Basic",
+        "advanced": "Advanced",
+        "expert": "Expert",
+        "master": "Master"
+    }
+    lower_str = difficulty_str.lower()
+    # Special check for Re:Master, must contain ':'
+    if "re" in lower_str and "master" in lower_str and ":" in lower_str:
+        return "Re:Master"
+    
+    return valid_difficulties.get(lower_str)
+
+def validate_target(target_str):
+    """Validates the target is a number between 0 and 101 with up to 4 decimal places."""
+    try:
+        target = Decimal(target_str)
+        if not (Decimal('0') <= target <= Decimal('101')):
+            return None, "Target must be between 0 and 101."
+        # Check decimal places by looking at the string representation
+        if '.' in target_str and len(target_str.split('.')[-1]) > 4:
+            return None, "Target can have a maximum of 4 decimal places."
+        return target, None
+    except InvalidOperation:
+        return None, "Target must be a valid number."
+
+def validate_amount(amount_str):
+    """Validates the amount is a number between 0 and 1,000,000 with up to 2 decimal places."""
+    try:
+        # Remove potential commas for user-friendliness
+        amount_str_cleaned = amount_str.replace(',', '')
+        amount = Decimal(amount_str_cleaned)
+        if not (Decimal('0') <= amount <= Decimal('1000000')):
+            return None, "Amount must be between 0 and 1,000,000."
+        if '.' in amount_str_cleaned and len(amount_str_cleaned.split('.')[-1]) > 2:
+             return None, "Amount can have a maximum of 2 decimal places."
+        # Format to 2 decimal places for consistency
+        return amount.quantize(Decimal('0.01')), None
+    except InvalidOperation:
+        return None, "Amount must be a valid number."
+
 # --- Bounty Data Storage ---
 # Load bounties from the file when the bot starts
 bounties = load_bounties()
@@ -53,14 +99,11 @@ async def on_message(message):
     """
     Handles messages to check for custom commands that don't use the bot's prefix.
     """
-    # This is now a global variable, so we need to declare our intent to modify it
     global bounties
 
-    # Ignore messages sent by the bot itself to prevent loops
     if message.author == bot.user:
         return
 
-    # Standardize message content for easier checking
     content = message.content.strip()
 
     # --- List Bounties Command ---
@@ -69,59 +112,66 @@ async def on_message(message):
             await message.channel.send("There are currently no active bounties.")
             return
 
-        # Build the table string
-        # We calculate padding to make it look neat
-        header = f"{'Song Name':<30} | {'Target':<15} | {'Amount':<10} | {'User':<20}\n"
-        separator = f"{'-'*30}-+-{'-'*15}-+-{'-'*10}-+-{'-'*20}\n"
+        header = f"{'Song Name':<30} | {'Difficulty':<10} | {'Target':<8} | {'Amount (RM)':<12} | {'User':<20}\n"
+        separator = f"{'-'*30}-+-{'-'*10}-+-{'-'*8}-+-{'-'*12}-+-{'-'*20}\n"
         table = header + separator
 
         for bounty in bounties:
-            # Truncate long song names to prevent breaking the format
             song_name = (bounty['song_name'][:27] + '...') if len(bounty['song_name']) > 30 else bounty['song_name']
-            target = (bounty['target'][:12] + '...') if len(bounty['target']) > 15 else bounty['target']
-            table += f"{song_name:<30} | {target:<15} | {bounty['amount']:<10} | {bounty['user']:<20}\n"
+            difficulty = bounty.get('difficulty', 'N/A')
+            target = str(bounty['target'])
+            amount = str(bounty['amount'])
+            user = bounty['user']
+            table += f"{song_name:<30} | {difficulty:<10} | {target:<8} | {amount:<12} | {user:<20}\n"
 
         await message.channel.send(f"**Current Bounties:**\n```\n{table}```")
 
     # --- Register Bounty Command ---
     elif content.lower().startswith("bounty>register "):
         try:
-            # Extract parameters from the command string
             params_str = content[len("bounty>register "):].strip()
+            parts = params_str.rsplit(' ', 3)
             
-            # The last two words are amount and target, everything before is the song name
-            parts = params_str.rsplit(' ', 2)
-            
-            if len(parts) < 3:
-                await message.channel.send("❌ **Invalid Format.** Please include a song name, target, and amount.")
+            if len(parts) < 4:
+                await message.channel.send("❌ **Invalid Format.** Use: `bounty>register [Song Name] [Difficulty] [Target] [Amount]`")
                 return
 
-            song_name = parts[0].strip()
-            target = parts[1].strip()
-            amount = parts[2].strip()
+            song_name, difficulty_str, target_str, amount_str = [p.strip() for p in parts]
 
             if not song_name:
                 await message.channel.send("❌ **Error:** Song name cannot be empty.")
                 return
-            if not target:
-                await message.channel.send("❌ **Error:** Target cannot be empty.")
+
+            # --- Validation ---
+            difficulty = validate_difficulty(difficulty_str)
+            if not difficulty:
+                await message.channel.send("❌ **Invalid Difficulty.** Valid values are: Easy, Basic, Advanced, Expert, Master, Re:Master.")
                 return
 
-            # Add the new bounty to our list
+            target, target_error = validate_target(target_str)
+            if target_error:
+                await message.channel.send(f"❌ **Invalid Target:** {target_error}")
+                return
+
+            amount, amount_error = validate_amount(amount_str)
+            if amount_error:
+                await message.channel.send(f"❌ **Invalid Amount:** {amount_error}")
+                return
+
             bounties.append({
                 "song_name": song_name,
-                "target": target,
-                "amount": amount,
+                "difficulty": difficulty,
+                "target": str(target),
+                "amount": str(amount),
                 "user": message.author.name
             })
-            # Save the updated list to the JSON file
             save_bounties(bounties)
             
             await message.channel.send(f"✅ **Bounty registered for '{song_name}'!**")
 
         except Exception as e:
             print(f"Error during bounty registration: {e}")
-            await message.channel.send("❌ **Invalid Format.** Use: `bounty>register [Song Name] [Target] [Amount]`")
+            await message.channel.send("❌ **Invalid Format.** Use: `bounty>register [Song Name] [Difficulty] [Target] [Amount]`")
 
     # --- Delete Bounty Command ---
     elif content.lower().startswith("bounty>delete "):
@@ -130,7 +180,6 @@ async def on_message(message):
             await message.channel.send("❌ **Invalid Format.** Please provide a song name to delete.")
             return
 
-        # Find all bounties matching the query (case-insensitive)
         user_matches = [
             b for b in bounties 
             if song_query in b['song_name'].lower() and b['user'] == message.author.name
@@ -147,7 +196,6 @@ async def on_message(message):
             await message.channel.send(response)
             return
 
-        # If exactly one match is found
         bounty_to_delete = user_matches[0]
         bounties.remove(bounty_to_delete)
         save_bounties(bounties)
@@ -160,9 +208,9 @@ async def on_message(message):
             "```\n"
             "aqil>bounty\n"
             "   - Lists all active bounties.\n\n"
-            "bounty>register [Song Name] [Target] [Amount]\n"
+            "bounty>register [Song Name] [Difficulty] [Target] [Amount]\n"
             "   - Registers a new bounty.\n"
-            "   - Example: bounty>register \"A Cruel Angel's Thesis\" FC 100k\n\n"
+            "   - Example: bounty>register \"My Song\" Master 100.5 150.50\n\n"
             "bounty>delete [Song Name]\n"
             "   - Deletes a bounty you created. Partial names work.\n\n"
             "bounty>help\n"
@@ -174,3 +222,4 @@ async def on_message(message):
 
 # --- Run the Bot ---
 bot.run(DISCORD_TOKEN)
+
