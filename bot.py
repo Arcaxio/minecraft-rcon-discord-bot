@@ -1,20 +1,19 @@
 import discord
 from discord.ext import commands
-import os # Used for securely loading credentials
+import os
 from dotenv import load_dotenv
-import json # Import the json library
-from decimal import Decimal, InvalidOperation # For precise decimal validation
+import json
+from decimal import Decimal, InvalidOperation 
 
 # --- Configuration ---
-# It's best practice to load these from environment variables or a config file
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-BOUNTY_FILE = "bounties.json" # The file to store bounty data
+BOUNTY_FILE = "bounties.json" 
+BOUNTIES_PER_PAGE = 10 # Define the pagination limit
 
 # --- Bot Setup ---
 intents = discord.Intents.default()
 intents.message_content = True
-# We still need a prefix, but since we handle commands manually, it won't be used.
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # --- Data Persistence Functions ---
@@ -22,16 +21,13 @@ def load_bounties():
     """Loads bounty data from the JSON file."""
     try:
         with open(BOUNTY_FILE, 'r') as f:
-            # Check if file is empty to avoid errors
             content = f.read()
             if not content:
                 return []
             return json.loads(content)
     except FileNotFoundError:
-        # If the file doesn't exist, return an empty list
         return []
     except json.JSONDecodeError:
-        # If the file is corrupted or not valid JSON, return empty
         print("Warning: Could not decode bounties.json. Starting with empty bounties.")
         return []
 
@@ -51,7 +47,6 @@ def validate_difficulty(difficulty_str):
         "master": "Master"
     }
     lower_str = difficulty_str.lower()
-    # Special check for Re:Master, must contain ':'
     if "re" in lower_str and "master" in lower_str and ":" in lower_str:
         return "Re:Master"
     
@@ -63,7 +58,6 @@ def validate_target(target_str):
         target = Decimal(target_str)
         if not (Decimal('0') <= target <= Decimal('101')):
             return None, "Target must be between 0 and 101."
-        # Check decimal places by looking at the string representation
         if '.' in target_str and len(target_str.split('.')[-1]) > 4:
             return None, "Target can have a maximum of 4 decimal places."
         return target, None
@@ -73,21 +67,93 @@ def validate_target(target_str):
 def validate_amount(amount_str):
     """Validates the amount is a number between 0 and 1,000,000 with up to 2 decimal places."""
     try:
-        # Remove potential commas for user-friendliness
         amount_str_cleaned = amount_str.replace(',', '')
         amount = Decimal(amount_str_cleaned)
         if not (Decimal('0') <= amount <= Decimal('1000000')):
             return None, "Amount must be between 0 and 1,000,000."
         if '.' in amount_str_cleaned and len(amount_str_cleaned.split('.')[-1]) > 2:
              return None, "Amount can have a maximum of 2 decimal places."
-        # Format to 2 decimal places for consistency
         return amount.quantize(Decimal('0.01')), None
     except InvalidOperation:
         return None, "Amount must be a valid number."
 
 # --- Bounty Data Storage ---
-# Load bounties from the file when the bot starts
 bounties = load_bounties()
+
+# --- NEW: Bounty Paginator View ---
+
+class BountyPaginator(discord.ui.View):
+    def __init__(self, bounties_data):
+        super().__init__(timeout=180) # Timeout after 3 minutes
+        self.bounties = bounties_data
+        self.current_page = 0
+        self.total_pages = (len(self.bounties) - 1) // BOUNTIES_PER_PAGE + 1
+        
+        # Disable buttons if there's only one page
+        self.update_buttons()
+
+    def get_page_content(self):
+        """Generates the content for the current page."""
+        
+        start_index = self.current_page * BOUNTIES_PER_PAGE
+        end_index = start_index + BOUNTIES_PER_PAGE
+        current_bounties = self.bounties[start_index:end_index]
+        
+        # Re-use your existing table formatting logic
+        header = f"{'Song Name':<30} | {'Difficulty':<10} | {'Target':<8} | {'Amount (RM)':<12} | {'User':<20}\n"
+        separator = f"{'-'*30}-+-{'-'*10}-+-{'-'*8}-+-{'-'*12}-+-{'-'*20}\n"
+        table = header + separator
+        
+        for bounty in current_bounties:
+            song_name = (bounty['song_name'][:27] + '...') if len(bounty['song_name']) > 30 else bounty['song_name']
+            difficulty = bounty.get('difficulty', 'N/A')
+            target = str(bounty['target'])
+            amount = str(bounty['amount'])
+            user = bounty['user']
+            table += f"{song_name:<30} | {difficulty:<10} | {target:<8} | {amount:<12} | {user:<20}\n"
+        
+        footer = f"\nPage {self.current_page + 1}/{self.total_pages}"
+        
+        return f"**Current Bounties:**\n```\n{table.strip()}{footer}```"
+    
+    def update_buttons(self):
+        """Manages which buttons are enabled/disabled."""
+        # Check if the view has been rendered with buttons yet
+        if len(self.children) >= 2:
+            self.children[0].disabled = self.current_page == 0
+            self.children[1].disabled = self.current_page == self.total_pages - 1
+        
+    @discord.ui.button(label="<", style=discord.ButtonStyle.blurple)
+    async def previous_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Must be the user who sent the command (or an admin) for best practice.
+        if interaction.user != interaction.message.author: # The bot sent the message, so check the original author if needed
+            pass # Skipping specific user check for simplicity here
+        
+        if self.current_page > 0:
+            self.current_page -= 1
+        self.update_buttons()
+        
+        await interaction.response.edit_message(
+            content=self.get_page_content(), 
+            view=self
+        )
+
+    @discord.ui.button(label=">", style=discord.ButtonStyle.blurple)
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Must be the user who sent the command (or an admin) for best practice.
+        if interaction.user != interaction.message.author: 
+            pass # Skipping specific user check for simplicity here
+
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+        self.update_buttons()
+        
+        await interaction.response.edit_message(
+            content=self.get_page_content(), 
+            view=self
+        )
+
+# --- Bot Events ---
 
 @bot.event
 async def on_ready():
@@ -106,25 +172,19 @@ async def on_message(message):
 
     content = message.content.strip()
 
-    # --- List Bounties Command ---
+    # --- List Bounties Command (UPDATED) ---
     if content.lower() == "aqil>bounty":
         if not bounties:
             await message.channel.send("There are currently no active bounties.")
             return
 
-        header = f"{'Song Name':<30} | {'Difficulty':<10} | {'Target':<8} | {'Amount (RM)':<12} | {'User':<20}\n"
-        separator = f"{'-'*30}-+-{'-'*10}-+-{'-'*8}-+-{'-'*12}-+-{'-'*20}\n"
-        table = header + separator
-
-        for bounty in bounties:
-            song_name = (bounty['song_name'][:27] + '...') if len(bounty['song_name']) > 30 else bounty['song_name']
-            difficulty = bounty.get('difficulty', 'N/A')
-            target = str(bounty['target'])
-            amount = str(bounty['amount'])
-            user = bounty['user']
-            table += f"{song_name:<30} | {difficulty:<10} | {target:<8} | {amount:<12} | {user:<20}\n"
-
-        await message.channel.send(f"**Current Bounties:**\n```\n{table}```")
+        # NEW: Instantiate and send the Paginator
+        paginator = BountyPaginator(bounties)
+        
+        await message.channel.send(
+            content=paginator.get_page_content(), 
+            view=paginator
+        )
 
     # --- Register Bounty Command ---
     elif content.lower().startswith("bounty>register "):
@@ -207,7 +267,7 @@ async def on_message(message):
             "**Bounty Bot Commands:**\n"
             "```\n"
             "aqil>bounty\n"
-            "   - Lists all active bounties.\n\n"
+            "   - Lists all active bounties with pagination.\n\n"
             "bounty>register [Song Name] [Difficulty] [Target] [Amount]\n"
             "   - Registers a new bounty.\n"
             "   - Example: bounty>register \"My Song\" Master 100.5 150.50\n\n"
@@ -222,4 +282,3 @@ async def on_message(message):
 
 # --- Run the Bot ---
 bot.run(DISCORD_TOKEN)
-
